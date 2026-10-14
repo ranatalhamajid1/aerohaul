@@ -15,10 +15,12 @@
 
 ```mermaid
 graph TD
-    subgraph Frontend [React 18 + TypeScript + Leaflet]
-        UI[Dispatch Dashboard & Form]
-        Map[Interactive Map & 48h Weather Radar]
-        Modal[Lexicographical Comparison Table]
+    subgraph Frontend [React 18 + TypeScript + MapLibre GL + Tailwind + Framer Motion]
+        UI[Flight-Deck Dispatch Dashboard & Morphing Dock]
+        Map[MapLibre GL Vector Map + OpenFreeMap Styles + Animated Truck]
+        Heatmap[Continuous IDW Weather Risk Gradient Field]
+        Timeline[0-48h Interactive Forecast Scrubber]
+        Modal[Lexicographical Comparison Decision Matrix]
     end
 
     subgraph Backend [Django 5 + Django REST Framework]
