@@ -94,6 +94,9 @@ export const MapContainerView: React.FC<MapContainerViewProps> = ({
   // Update plan & selection
   useEffect(() => {
     controllerRef.current?.setPlan(plan, selectedRouteId);
+    if (heatmapFrames.frames.size > 0) {
+      controllerRef.current?.setFrames(heatmapFrames.frames);
+    }
   }, [plan]);
 
   // Update selected route

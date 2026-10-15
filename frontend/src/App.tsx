@@ -123,6 +123,8 @@ function FreightMissionControl() {
         <ForecastTimelineBar
           departureTime={planResult?.departure_time}
           heatmapFrames={heatmapFrames}
+          theme={theme}
+          loadWeight={planResult?.load_weight_lb}
         />
       </div>
 

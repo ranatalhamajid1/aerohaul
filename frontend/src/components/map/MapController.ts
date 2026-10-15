@@ -90,6 +90,7 @@ export class MapController {
   private raf = 0;
   private interactionsBound = false;
   private readonly unsub: () => void;
+  private frames = new Map<number, import('../../types').HeatmapResponse>();
   private styleAttempt = 0;
   private isReady = false;
 
@@ -119,6 +120,9 @@ export class MapController {
     this.popup.on('close', () => {
       if (viewStore.get().selectedCp !== null) viewStore.set({ selectedCp: null });
     });
+
+    (window as any).__map = this.map;
+    (window as any).__controller = this;
 
     this.map.on('error', (e) => {
       // Style fallback chain
@@ -190,6 +194,9 @@ export class MapController {
     this.departure = plan?.departure_time ?? '';
     this.selectedId = selectedId;
     this.heat.setRoutes(this.routes.map((r) => r.coords));
+    if (this.frames.size > 0) {
+      this.heat.setFrames(this.frames);
+    }
     if (!this.map.isStyleLoaded()) return; // install() will apply once ready
     this.applyRouteData();
     this.applySelectionStyle();
@@ -210,6 +217,7 @@ export class MapController {
   }
 
   setFrames(frames: Map<number, import('../../types').HeatmapResponse>): void {
+    this.frames = frames;
     this.heat.setFrames(frames);
   }
 
@@ -252,8 +260,26 @@ export class MapController {
     if (map.getLayer('background')) map.setPaintProperty('background', 'background-color', tint.bg);
     if (map.getLayer('water')) map.setPaintProperty('water', 'fill-color', tint.water);
 
-    const firstSymbol = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
-    this.heat.install(firstSymbol);
+    // Find the first road or symbol layer to anchor the heatmap ABOVE land/water and BELOW roads
+    const layers = map.getStyle().layers || [];
+    let anchor: string | undefined;
+    for (const l of layers) {
+      if (l.id.startsWith('route-') || l.id.startsWith('cp-') || l.id === 'heat-layer') continue;
+      if (
+        (l.type === 'line' || l.type === 'symbol') &&
+        /highway|road|street|transport|transit|rail|tunnel|bridge/i.test(l.id)
+      ) {
+        anchor = l.id;
+        break;
+      }
+    }
+    if (!anchor) {
+      anchor = layers.find((l) => l.type === 'symbol' && !l.id.startsWith('route-') && !l.id.startsWith('cp-'))?.id;
+    }
+    this.heat.install(anchor);
+    if (this.frames.size > 0) {
+      this.heat.setFrames(this.frames);
+    }
 
     for (let i = 0; i < MAX_ROUTES; i++) {
       map.addSource(`route-${i}`, { type: 'geojson', lineMetrics: true, data: EMPTY });
@@ -270,9 +296,9 @@ export class MapController {
       filter: declutterFilter(),
       paint: {
         'circle-color': ['get', 'color'],
-        'circle-opacity': ['case', hover, 0.28, 0],
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 12, 9, 18],
-        'circle-blur': 0.4,
+        'circle-opacity': ['case', hover, 0.35, 0],
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 14, 9, 22],
+        'circle-blur': 0.35,
       },
     });
     map.addLayer({
@@ -287,12 +313,12 @@ export class MapController {
           ['linear'],
           ['zoom'],
           3,
-          ['case', hover, 7, ['case', ['get', 'severe'], 4.5, 3.2]],
+          ['case', hover, 8, ['case', ['get', 'severe'], 5.2, 4.0]],
           9,
-          ['case', hover, 11, ['case', ['get', 'severe'], 7.5, 6]],
+          ['case', hover, 13, ['case', ['get', 'severe'], 9.5, 7.5]],
         ],
-        'circle-stroke-color': ['case', hover, '#FFA62B', CASING[this.theme]],
-        'circle-stroke-width': ['case', hover, 2.5, 1.5],
+        'circle-stroke-color': ['case', hover, '#FFA62B', this.theme === 'dark' ? '#FFFFFF' : '#111316'],
+        'circle-stroke-width': ['case', hover, 3.0, 2.0],
       },
     });
 
@@ -314,12 +340,19 @@ export class MapController {
     this.interactionsBound = true;
     const map = this.map;
     for (let i = 0; i < MAX_ROUTES; i++) {
-      map.on('click', `route-line-${i}`, () => {
+      const onSelect = () => {
         const r = this.routes[i];
         if (r) this.cb.current.onSelectRoute(r.id);
-      });
-      map.on('mouseenter', `route-line-${i}`, () => (map.getCanvas().style.cursor = 'pointer'));
-      map.on('mouseleave', `route-line-${i}`, () => (map.getCanvas().style.cursor = ''));
+      };
+      const onEnter = () => (map.getCanvas().style.cursor = 'pointer');
+      const onLeave = () => (map.getCanvas().style.cursor = '');
+
+      map.on('click', `route-line-${i}`, onSelect);
+      map.on('click', `route-casing-${i}`, onSelect);
+      map.on('mouseenter', `route-line-${i}`, onEnter);
+      map.on('mouseenter', `route-casing-${i}`, onEnter);
+      map.on('mouseleave', `route-line-${i}`, onLeave);
+      map.on('mouseleave', `route-casing-${i}`, onLeave);
     }
     map.on('mousemove', 'cp-dot', (e: MapLayerMouseEvent) => {
       const idx = e.features?.[0]?.id;
@@ -408,17 +441,17 @@ export class MapController {
       map.setPaintProperty(
         `route-line-${i}`,
         'line-width',
-        isSel ? ['interpolate', ['linear'], ['zoom'], 3, 3.6, 10, 7] : ['interpolate', ['linear'], ['zoom'], 3, 1.6, 10, 3.5],
+        isSel ? ['interpolate', ['linear'], ['zoom'], 3, 4.0, 10, 7.5] : ['interpolate', ['linear'], ['zoom'], 3, 2.2, 10, 4.5],
       );
-      map.setPaintProperty(`route-line-${i}`, 'line-opacity', isSel ? 1 : 0.42);
+      map.setPaintProperty(`route-line-${i}`, 'line-opacity', isSel ? 1.0 : 0.62);
       map.setPaintProperty(`route-line-${i}`, 'line-offset', offset);
       map.setPaintProperty(`route-casing-${i}`, 'line-offset', offset);
       map.setPaintProperty(
         `route-casing-${i}`,
         'line-width',
-        isSel ? ['interpolate', ['linear'], ['zoom'], 3, 7, 10, 12] : 0,
+        isSel ? ['interpolate', ['linear'], ['zoom'], 3, 8.0, 10, 13.0] : ['interpolate', ['linear'], ['zoom'], 3, 4.2, 10, 7.0],
       );
-      map.setPaintProperty(`route-casing-${i}`, 'line-opacity', 0.9);
+      map.setPaintProperty(`route-casing-${i}`, 'line-opacity', isSel ? 0.95 : 0.85);
     }
     // Selected route on top of alternatives, beneath checkpoints.
     if (sel && map.getLayer('cp-halo')) {

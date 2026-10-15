@@ -9,7 +9,7 @@ import type { HeatWorkerRequest, HeatWorkerResponse } from '../../lib/heatmap.wo
 
 const SOURCE = 'heat';
 const LAYER = 'heat-layer';
-const FADE_MS = 240;
+const FADE_MS = 200;
 
 type Drawable = HTMLCanvasElement | ImageBitmap;
 
@@ -20,6 +20,12 @@ const requestIdle: (cb: () => void) => IdleHandle =
     : (cb) => window.setTimeout(cb, 16);
 const cancelIdle: (h: IdleHandle) => void =
   typeof window.cancelIdleCallback === 'function' ? (h) => window.cancelIdleCallback(h) : (h) => window.clearTimeout(h);
+
+export interface FrameStats {
+  min: number;
+  max: number;
+  mean: number;
+}
 
 /**
  * Corridor heatmap rendered into a MapLibre `canvas` source.
@@ -33,6 +39,7 @@ export class HeatLayer {
   private frames = new Map<number, HeatmapResponse>();
   private routes: LatLng[][] = [];
   private cache = new Map<string, Drawable>();
+  private statsCache = new Map<string, FrameStats>();
   private currentKey: string | null = null;
   private fadeRaf = 0;
   private idle: IdleHandle | null = null;
@@ -53,7 +60,10 @@ export class HeatLayer {
     try {
       this.worker = new Worker(new URL('../../lib/heatmap.worker.ts', import.meta.url), { type: 'module' });
       this.worker.onmessage = (e: MessageEvent<HeatWorkerResponse>) => {
-        const { id, bitmap, imageData } = e.data;
+        const { id, bitmap, imageData, stats } = e.data;
+        if (stats) {
+          this.statsCache.set(id, stats);
+        }
         if (bitmap) {
           this.cache.set(id, bitmap);
         } else if (imageData) {
@@ -93,11 +103,16 @@ export class HeatLayer {
 
   setRoutes(routes: LatLng[][]): void {
     this.routes = routes;
-    this.ext = null;
-    this.frames = new Map();
     this.resetCache();
-    const ctx = this.canvas.getContext('2d');
-    ctx?.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    if (this.frames.size > 0) {
+      const first = this.frames.values().next().value as HeatmapResponse;
+      this.ext = extentOf(first.points);
+      this.canvas.width = this.prev.width = FRAME_WIDTH;
+      this.canvas.height = this.prev.height = frameHeight(this.ext, FRAME_WIDTH);
+      this.ensureSource();
+      this.refresh();
+      this.schedulePrecompute();
+    }
   }
 
   setTheme(theme: ThemeName): void {
@@ -108,11 +123,13 @@ export class HeatLayer {
 
   setFrames(frames: Map<number, HeatmapResponse>): void {
     this.frames = frames;
-    if (!this.ext && frames.size > 0) {
-      const first = frames.values().next().value as HeatmapResponse;
-      this.ext = extentOf(first.points);
-      this.canvas.width = this.prev.width = FRAME_WIDTH;
-      this.canvas.height = this.prev.height = frameHeight(this.ext, FRAME_WIDTH);
+    if (frames.size > 0) {
+      if (!this.ext) {
+        const first = frames.values().next().value as HeatmapResponse;
+        this.ext = extentOf(first.points);
+        this.canvas.width = this.prev.width = FRAME_WIDTH;
+        this.canvas.height = this.prev.height = frameHeight(this.ext, FRAME_WIDTH);
+      }
       this.ensureSource();
     }
     this.refresh();
@@ -138,6 +155,7 @@ export class HeatLayer {
 
   private resetCache(): void {
     this.cache.clear();
+    this.statsCache.clear();
     this.currentKey = null;
   }
 
@@ -165,7 +183,11 @@ export class HeatLayer {
           id: LAYER,
           type: 'raster',
           source: SOURCE,
-          paint: { 'raster-opacity': 1, 'raster-fade-duration': 0, 'raster-resampling': 'linear' },
+          paint: {
+            'raster-opacity': 0.72,
+            'raster-fade-duration': 0,
+            'raster-resampling': 'linear',
+          },
         },
         this.beforeId && this.map.getLayer(this.beforeId) ? this.beforeId : undefined,
       );
@@ -209,7 +231,12 @@ export class HeatLayer {
   }
 
   private refresh(): void {
-    if (!this.map.getLayer(LAYER)) return;
+    if (!this.map.getLayer(LAYER)) {
+      if (this.ext && this.map.isStyleLoaded()) {
+        this.ensureSource();
+      }
+      if (!this.map.getLayer(LAYER)) return;
+    }
     this.map.setLayoutProperty(LAYER, 'visibility', this.want.on ? 'visible' : 'none');
     if (!this.want.on) return;
     const h = nearestLoaded(this.frames, this.want.hour);
@@ -220,6 +247,19 @@ export class HeatLayer {
     if (!next) return;
     this.currentKey = key;
     this.crossfade(next);
+
+    // Diagnostic log & global debug badge
+    const stats = this.statsCache.get(key);
+    const hasLayer = Boolean(this.map.getLayer(LAYER));
+    (window as any).__heatmapDebug = {
+      present: hasLayer,
+      hour: h,
+      metric: this.want.metric,
+      stats: stats ?? null,
+    };
+    console.log(
+      `[Heatmap] layer present: ${hasLayer}, metric: ${this.want.metric}, hour: ${h}, min: ${stats?.min?.toFixed(2) ?? 'N/A'}, max: ${stats?.max?.toFixed(2) ?? 'N/A'}, mean: ${stats?.mean?.toFixed(2) ?? 'N/A'}`,
+    );
   }
 
   private crossfade(next: Drawable): void {

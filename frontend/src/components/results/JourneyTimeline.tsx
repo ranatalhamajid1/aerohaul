@@ -99,6 +99,7 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
   route,
   onSelectCheckpoint,
 }) => {
+  const [isCollapsed, setIsCollapsed] = React.useState(false);
   const hoveredCp = useView((s) => s.hoveredCp);
   const selectedCp = useView((s) => s.selectedCp);
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -110,45 +111,51 @@ export const JourneyTimeline: React.FC<JourneyTimelineProps> = ({
 
   // Auto-scroll when checkpoint is clicked on map
   useEffect(() => {
-    if (selectedCp !== null) {
+    if (selectedCp !== null && !isCollapsed) {
       const el = rowRefs.current.get(selectedCp);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
     }
-  }, [selectedCp]);
+  }, [selectedCp, isCollapsed]);
 
   if (!route) return null;
   const checkpoints = route.checkpoints || [];
 
   return (
-    <Panel className="w-full md:w-[320px] max-h-[calc(100vh-100px)] overflow-hidden shadow-panel border hairline flex flex-col">
+    <Panel className="w-full md:w-[310px] max-h-[calc(100vh-210px)] overflow-hidden shadow-panel border hairline flex flex-col transition-all">
       {/* Header */}
-      <div className="p-3.5 border-b hairline flex items-center justify-between bg-surface/60">
+      <div className="p-3 border-b hairline flex items-center justify-between bg-surface/60">
         <div>
           <div className="eyebrow">WAYPOINT LOG</div>
           <div className="text-xs font-display font-bold text-ink">
-            {checkpoints.length} Checkpoint Samples
+            {checkpoints.length} Checkpoints (~{checkpoints[1]?.mile || 25} mi)
           </div>
         </div>
-        <span className="text-[10px] font-mono text-muted">
-          Every ~{checkpoints[1]?.mile || 25} mi
-        </span>
+        <button
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className="text-muted hover:text-ink text-[11px] font-mono px-2 py-0.5 rounded border hairline bg-surface/40 hover:bg-surface cursor-pointer transition"
+          title={isCollapsed ? 'Expand waypoint log' : 'Collapse waypoint log'}
+        >
+          {isCollapsed ? 'EXPAND' : 'COLLAPSE'}
+        </button>
       </div>
 
       {/* Checkpoints Scrollable List */}
-      <div className="flex-1 overflow-y-auto scroll-thin divide-y divide-line/5 p-1.5">
-        {checkpoints.map((cp: Checkpoint) => (
-          <CheckpointRow
-            key={cp.index}
-            cp={cp}
-            isHovered={hoveredCp === cp.index}
-            isSelected={selectedCp === cp.index}
-            onSelect={onSelectCheckpoint}
-            setRowRef={setRowRef}
-          />
-        ))}
-      </div>
+      {!isCollapsed && (
+        <div className="flex-1 overflow-y-auto scroll-thin divide-y divide-line/5 p-1.5">
+          {checkpoints.map((cp: Checkpoint) => (
+            <CheckpointRow
+              key={cp.index}
+              cp={cp}
+              isHovered={hoveredCp === cp.index}
+              isSelected={selectedCp === cp.index}
+              onSelect={onSelectCheckpoint}
+              setRowRef={setRowRef}
+            />
+          ))}
+        </div>
+      )}
     </Panel>
   );
 };

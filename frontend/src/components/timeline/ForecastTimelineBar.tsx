@@ -5,6 +5,8 @@ import type { HeatMetric } from '../../lib/riskScale';
 import type { HeatmapFrames } from '../../hooks/useHeatmapFrames';
 import { Panel } from '../ui/Panel';
 import { formatClock, formatDay, addHours } from '../../lib/format';
+import { HeatmapLegend } from './HeatmapLegend';
+import type { ThemeName } from '../../lib/tokens';
 
 interface TimeDisplayPillProps {
   departureTime: string;
@@ -45,11 +47,15 @@ TimeDisplayPill.displayName = 'TimeDisplayPill';
 interface ForecastTimelineBarProps {
   departureTime?: string;
   heatmapFrames: HeatmapFrames;
+  theme?: ThemeName;
+  loadWeight?: number;
 }
 
 export const ForecastTimelineBar: React.FC<ForecastTimelineBarProps> = ({
   departureTime = new Date().toISOString(),
   heatmapFrames,
+  theme = 'dark',
+  loadWeight = 45000,
 }) => {
   const hour = useView((s) => s.hour);
   const metric = useView((s) => s.metric);
@@ -83,6 +89,28 @@ export const ForecastTimelineBar: React.FC<ForecastTimelineBarProps> = ({
     });
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      viewStore.set({ hour: Math.min(48, hour + 1) });
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      viewStore.set({ hour: Math.max(0, hour - 1) });
+    } else if (e.key === 'PageUp') {
+      e.preventDefault();
+      viewStore.set({ hour: Math.min(48, hour + 6) });
+    } else if (e.key === 'PageDown') {
+      e.preventDefault();
+      viewStore.set({ hour: Math.max(0, hour - 6) });
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      viewStore.set({ hour: 0 });
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      viewStore.set({ hour: 48 });
+    }
+  };
+
   const metrics: { id: HeatMetric; label: string; icon: React.ReactNode }[] = [
     { id: 'overall', label: 'Overall', icon: <ShieldAlert className="w-3 h-3" /> },
     { id: 'wind', label: 'Wind', icon: <Wind className="w-3 h-3" /> },
@@ -91,99 +119,121 @@ export const ForecastTimelineBar: React.FC<ForecastTimelineBarProps> = ({
   ];
 
   return (
-    <Panel className="pointer-events-auto p-3 shadow-lift border hairline flex flex-col md:flex-row items-center gap-3 md:gap-4 max-w-4xl w-full mx-auto">
-      {/* Controls Left: Play/Pause + Time Display */}
-      <div className="flex items-center gap-3 shrink-0">
-        <button
-          onClick={() => viewStore.set({ playing: !playing })}
-          className="w-8 h-8 rounded-[9px] bg-accent text-accent-ink hover:brightness-105 active:brightness-95 flex items-center justify-center transition cursor-pointer shadow-xs"
-          title={playing ? 'Pause timeline animation' : 'Play timeline animation'}
-          aria-label={playing ? 'Pause' : 'Play'}
-        >
-          {playing ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
-        </button>
-
-        <TimeDisplayPill departureTime={departureTime} loadedFrames={heatmapFrames.loaded} />
+    <div className="flex flex-col items-center gap-2 max-w-4xl w-full mx-auto">
+      {/* Floating Legend above the dock on right/center */}
+      <div className="w-full flex justify-end px-2">
+        <HeatmapLegend theme={theme} loadWeight={loadWeight} />
       </div>
 
-      {/* Center: Timeline Scrubber with Ticks */}
-      <div className="flex-1 w-full space-y-1">
-        <input
-          type="range"
-          min={0}
-          max={48}
-          step={1}
-          value={hour}
-          onChange={handleSlider}
-          className="scrubber"
-          aria-label="Forecast hour slider (0 to 48 hours)"
-        />
+      <Panel className="pointer-events-auto p-3 shadow-lift border hairline flex flex-col md:flex-row items-center gap-3 md:gap-4 w-full">
+        {/* Controls Left: Play/Pause + Time Display */}
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={() => viewStore.set({ playing: !playing })}
+            className="w-8 h-8 rounded-[9px] bg-accent text-accent-ink hover:brightness-105 active:brightness-95 flex items-center justify-center transition cursor-pointer shadow-xs"
+            title={playing ? 'Pause timeline animation' : 'Play timeline animation'}
+            aria-label={playing ? 'Pause timeline animation' : 'Play timeline animation'}
+          >
+            {playing ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+          </button>
 
-        {/* Hour Ticks */}
-        <div className="flex justify-between text-[9px] font-mono text-muted px-1">
-          {[0, 6, 12, 18, 24, 30, 36, 42, 48].map((tick) => (
-            <span
-              key={tick}
-              className={`transition-colors cursor-pointer ${
-                hour === tick ? 'text-accent font-bold' : 'hover:text-ink'
-              }`}
-              onClick={() => viewStore.set({ hour: tick })}
-            >
-              {tick}h
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Right: Metric Chips & Heatmap / Truck Toggles */}
-      <div className="flex items-center gap-2 shrink-0">
-        {/* Metric Selector Chips */}
-        <div className="flex items-center gap-1 bg-surface p-1 rounded-[10px] border hairline">
-          {metrics.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => viewStore.set({ metric: m.id })}
-              className={`text-[11px] font-sans font-medium px-2 py-1 rounded-[6px] transition flex items-center gap-1 cursor-pointer ${
-                metric === m.id
-                  ? 'bg-accent text-accent-ink font-bold shadow-xs'
-                  : 'text-muted hover:text-ink'
-              }`}
-              title={`Switch heatmap to ${m.label}`}
-            >
-              {m.icon}
-              <span className="hidden sm:inline">{m.label}</span>
-            </button>
-          ))}
+          <TimeDisplayPill departureTime={departureTime} loadedFrames={heatmapFrames.loaded} />
         </div>
 
-        {/* Heatmap Toggle */}
-        <button
-          onClick={() => viewStore.set({ heatmapOn: !heatmapOn })}
-          className={`p-2 rounded-[10px] border transition cursor-pointer ${
-            heatmapOn
-              ? 'bg-accent/15 border-accent/40 text-accent'
-              : 'glass border-line/10 text-muted hover:text-ink'
-          }`}
-          title={heatmapOn ? 'Hide Weather Radar' : 'Show Weather Radar'}
-          aria-label="Toggle weather radar overlay"
-        >
-          <Layers className="w-3.5 h-3.5" />
-        </button>
+        {/* Center: Timeline Scrubber with visible track, filled progress, and ticks */}
+        <div className="flex-1 w-full space-y-1">
+          <div className="relative w-full flex items-center h-6">
+            {/* Background Track with Fill */}
+            <div className="absolute inset-x-0 h-1.5 rounded-full bg-line/15 overflow-hidden">
+              <div
+                className="h-full bg-accent transition-all duration-75"
+                style={{ width: `${(hour / 48) * 100}%` }}
+              />
+            </div>
 
-        {/* Truck Toggle */}
-        <button
-          onClick={() => viewStore.set({ truckOn: !truckOn })}
-          className={`p-2 rounded-[10px] border transition cursor-pointer ${
-            truckOn
-              ? 'bg-accent/15 border-accent/40 text-accent'
-              : 'glass border-line/10 text-muted hover:text-ink'
-          }`}
-          title={truckOn ? 'Disable Truck Animation' : 'Enable Truck Animation'}
-          aria-label="Toggle animated truck marker"
-        >
-          <Truck className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    </Panel>
+            <input
+              type="range"
+              min={0}
+              max={48}
+              step={1}
+              value={hour}
+              onChange={handleSlider}
+              onKeyDown={handleKeyDown}
+              className="scrubber"
+              aria-label="Forecast hour slider (0 to 48 hours)"
+              aria-valuemin={0}
+              aria-valuemax={48}
+              aria-valuenow={hour}
+            />
+          </div>
+
+          {/* Hour Ticks aligned with the track */}
+          <div className="flex justify-between text-[9px] font-mono text-muted px-1">
+            {[0, 6, 12, 18, 24, 30, 36, 42, 48].map((tick) => (
+              <span
+                key={tick}
+                className={`transition-colors cursor-pointer ${
+                  hour === tick ? 'text-accent font-bold scale-110' : 'hover:text-ink'
+                }`}
+                onClick={() => viewStore.set({ hour: tick })}
+                title={`Jump to forecast hour +${tick}h`}
+              >
+                {tick}h
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Right: Metric Chips & Heatmap / Truck Toggles */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Metric Selector Chips */}
+          <div className="flex items-center gap-1 bg-surface p-1 rounded-[10px] border hairline">
+            {metrics.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => viewStore.set({ metric: m.id })}
+                className={`text-[11px] font-sans font-medium px-2 py-1 rounded-[6px] transition flex items-center gap-1 cursor-pointer ${
+                  metric === m.id
+                    ? 'bg-accent text-accent-ink font-bold shadow-xs'
+                    : 'text-muted hover:text-ink'
+                }`}
+                title={`Switch heatmap to ${m.label}`}
+              >
+                {m.icon}
+                <span className="hidden sm:inline">{m.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Heatmap Toggle */}
+          <button
+            onClick={() => viewStore.set({ heatmapOn: !heatmapOn })}
+            className={`p-2 rounded-[10px] border transition cursor-pointer ${
+              heatmapOn
+                ? 'bg-accent/15 border-accent/40 text-accent'
+                : 'glass border-line/10 text-muted hover:text-ink'
+            }`}
+            title={heatmapOn ? 'Hide Weather Radar' : 'Show Weather Radar'}
+            aria-label="Toggle weather radar overlay"
+          >
+            <Layers className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Truck Toggle */}
+          <button
+            onClick={() => viewStore.set({ truckOn: !truckOn })}
+            className={`p-2 rounded-[10px] border transition cursor-pointer ${
+              truckOn
+                ? 'bg-accent/15 border-accent/40 text-accent'
+                : 'glass border-line/10 text-muted hover:text-ink'
+            }`}
+            title={truckOn ? 'Disable Truck Animation' : 'Enable Truck Animation'}
+            aria-label="Toggle animated truck marker"
+          >
+            <Truck className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </Panel>
+    </div>
   );
 };

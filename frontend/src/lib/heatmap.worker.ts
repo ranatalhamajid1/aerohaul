@@ -19,11 +19,12 @@ export interface HeatWorkerResponse {
   id: string;
   bitmap?: ImageBitmap;
   imageData?: { width: number; height: number; data: Uint8ClampedArray };
+  stats?: { min: number; max: number; mean: number };
   error?: string;
 }
 
-const COARSE_WIDTH = 120;
-const CORRIDOR_BUFFER_MI = 40;
+const COARSE_WIDTH = 130;
+const CORRIDOR_BUFFER_MI = 35;
 
 function frameH(ext: RasterExtent, width: number): number {
   const spanX = ((ext.east - ext.west) * Math.PI) / 180;
@@ -54,13 +55,22 @@ self.onmessage = async (e: MessageEvent<HeatWorkerRequest>) => {
     const px = new Float32Array(points.length);
     const py = new Float32Array(points.length);
     const pv = new Float32Array(points.length);
+    let minVal = Infinity;
+    let maxVal = -Infinity;
+    let sumVal = 0;
+
     for (let i = 0; i < points.length; i++) {
       const p = points[i];
       const [x, y] = project(ext, cw, ch, p.lat, p.lng);
       px[i] = x;
       py[i] = y;
-      pv[i] = metricValue(p, metric);
+      const v = metricValue(p, metric);
+      pv[i] = v;
+      if (v < minVal) minVal = v;
+      if (v > maxVal) maxVal = v;
+      sumVal += v;
     }
+    const meanVal = points.length > 0 ? sumVal / points.length : 0;
 
     const lut = rampLut(theme);
     const coarseBytes = new Uint8ClampedArray(cw * ch * 4);
@@ -88,8 +98,9 @@ self.onmessage = async (e: MessageEvent<HeatWorkerRequest>) => {
           den += w;
         }
 
-        const val = exact >= 0 ? exact : den > 0 ? num / den : 1;
-        const norm = Math.max(0, Math.min(255, Math.round(((val - 1) / 5) * 255)));
+        const val = exact >= 0 ? exact : den > 0 ? num / den : 0;
+        // val is in [0, 1]
+        const norm = Math.max(0, Math.min(255, Math.round(val * 255)));
         const lutOffset = norm * 4;
         const offset = rowOffset + x * 4;
         coarseBytes[offset] = lut[lutOffset] ?? 0;
@@ -114,14 +125,14 @@ self.onmessage = async (e: MessageEvent<HeatWorkerRequest>) => {
           octx.imageSmoothingQuality = 'medium';
           octx.drawImage(coarseCanvas, 0, 0, fw, fh);
 
-          // Corridor Buffer Clipping
+          // Corridor Buffer Clipping around ALL routes
           if (routes && routes.length > 0) {
             const maskCanvas = new OffscreenCanvas(fw, fh);
             const mctx = maskCanvas.getContext('2d');
             if (mctx) {
               const miSpanX = haversineMi([ext.south, ext.west], [ext.south, ext.east]);
               const pxPerMi = fw / Math.max(miSpanX, 1);
-              const radiusPx = Math.max(12, CORRIDOR_BUFFER_MI * pxPerMi);
+              const radiusPx = Math.max(16, CORRIDOR_BUFFER_MI * pxPerMi);
 
               mctx.lineCap = 'round';
               mctx.lineJoin = 'round';
@@ -140,13 +151,17 @@ self.onmessage = async (e: MessageEvent<HeatWorkerRequest>) => {
                 mctx.stroke();
               }
 
+              // Apply mask
               octx.globalCompositeOperation = 'destination-in';
               octx.drawImage(maskCanvas, 0, 0);
             }
           }
 
           const bitmap = outCanvas.transferToImageBitmap();
-          (postMessage as (msg: unknown, transfer: Transferable[]) => void)({ id, bitmap }, [bitmap]);
+          (postMessage as (msg: unknown, transfer: Transferable[]) => void)(
+            { id, bitmap, stats: { min: minVal, max: maxVal, mean: meanVal } },
+            [bitmap],
+          );
           return;
         }
       }
@@ -156,6 +171,7 @@ self.onmessage = async (e: MessageEvent<HeatWorkerRequest>) => {
     postMessage({
       id,
       imageData: { width: cw, height: ch, data: coarseBytes },
+      stats: { min: minVal, max: maxVal, mean: meanVal },
     });
   } catch (err: unknown) {
     const error = err instanceof Error ? err.message : String(err);

@@ -12,8 +12,8 @@ export interface RasterExtent {
 
 /** Display resolution of each frame (upscaled + blurred from a coarse IDW grid). */
 export const FRAME_WIDTH = 640;
-const COARSE_WIDTH = 150;
-const CORRIDOR_BUFFER_MI = 40;
+const COARSE_WIDTH = 130;
+const CORRIDOR_BUFFER_MI = 35;
 
 export function extentOf(points: HeatmapPoint[]): RasterExtent {
   let west = Infinity;
@@ -44,7 +44,7 @@ function project(ext: RasterExtent, w: number, h: number, lat: number, lng: numb
 }
 
 /**
- * Render one heatmap frame:
+ * Render one heatmap frame (synchronous fallback when Web Worker is unavailable):
  *  1. inverse-distance-weighted interpolation of grid values onto a coarse canvas,
  *  2. bilinear upscale + soft blur onto the display canvas,
  *  3. clip to a soft-edged buffer around the route corridors.
@@ -94,12 +94,12 @@ export function renderFrame(
           exact = pv[i];
           break;
         }
-        const w = 1 / (d2 * d2); // power 4 on distance → crisper, less muddy than p=2
+        const w = 1 / (d2 * d2);
         num += w * pv[i];
         den += w;
       }
-      const v = exact >= 0 ? exact : num / den;
-      const li = Math.max(0, Math.min(255, Math.round(((v - 1) / 5) * 255))) * 4;
+      const v = exact >= 0 ? exact : den > 0 ? num / den : 0;
+      const li = Math.max(0, Math.min(255, Math.round(v * 255))) * 4;
       const o = (y * cw + x) * 4;
       data[o] = lut[li];
       data[o + 1] = lut[li + 1];
@@ -113,15 +113,15 @@ export function renderFrame(
   const H = out.height;
   octx.imageSmoothingEnabled = true;
   octx.imageSmoothingQuality = 'high';
-  octx.filter = 'blur(10px)';
+  octx.filter = 'blur(8px)';
   octx.drawImage(coarse, 0, 0, W, H);
 
-  // Corridor mask: thick, blurred route strokes keep only pixels near the routes.
+  // Corridor mask around all routes
   const midLat = (ext.north + ext.south) / 2;
   const miPerPx = ((ext.east - ext.west) * 69.17 * Math.cos((midLat * Math.PI) / 180)) / W;
   const bufferPx = (CORRIDOR_BUFFER_MI * 2) / Math.max(miPerPx, 1e-6);
   octx.globalCompositeOperation = 'destination-in';
-  octx.filter = `blur(${Math.round(bufferPx * 0.25)}px)`;
+  octx.filter = `blur(${Math.round(bufferPx * 0.18)}px)`;
   octx.strokeStyle = '#000';
   octx.lineCap = 'round';
   octx.lineJoin = 'round';

@@ -120,7 +120,7 @@ export const TripPlannerDock: React.FC<TripPlannerDockProps> = ({
   const animatedAvgRisk = useCountUp(selectedRoute?.summary.avg_risk ?? 0);
 
   return (
-    <Panel className="w-full md:w-[392px] max-h-[calc(100vh-100px)] overflow-y-auto scroll-thin p-4 shadow-panel border hairline flex flex-col gap-4">
+    <Panel className="w-full md:w-[392px] max-h-[calc(100vh-210px)] overflow-y-auto scroll-thin p-4 shadow-panel border hairline flex flex-col gap-4">
       {/* ───────────────── Planning Progress State ───────────────── */}
       {isPending && (
         <div className="py-6 space-y-4">
@@ -393,7 +393,9 @@ export const TripPlannerDock: React.FC<TripPlannerDockProps> = ({
             </div>
 
             <p className="text-xs text-ink leading-relaxed m-0 font-sans">
-              {planResult.recommendation.explanation}
+              {planResult.recommendation.explanation
+                .replace(/(\d+)\.0\s*(mi|miles)/g, '$1 mi')
+                .replace(/0\.0\s+([A-Za-z\s]+)\s+miles/gi, '0 mi $1')}
             </p>
           </div>
 
@@ -414,14 +416,19 @@ export const TripPlannerDock: React.FC<TripPlannerDockProps> = ({
                         : 'bg-surface/40 hover:bg-surface/70 border-line/10'
                     }`}
                   >
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <span
-                        className="w-2.5 h-2.5 rounded-full ring-1 ring-white/20 shrink-0"
-                        style={{ backgroundColor: token.hex[theme] }}
-                      />
-                      <span className="text-[11px] font-display font-bold text-ink truncate">
-                        {r.name.split('(')[0].trim()}
-                      </span>
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full ring-1 ring-white/20 shrink-0"
+                          style={{ backgroundColor: token.hex[theme] }}
+                        />
+                        <span className="text-[11px] font-display font-bold text-ink">
+                          Route {idx + 1}
+                        </span>
+                      </div>
+                      <div className="text-[10px] font-mono text-muted truncate mb-1.5">
+                        {r.name.includes('(') ? r.name.match(/\((.*?)\)/)?.[1] || r.name : r.name}
+                      </div>
                     </div>
 
                     <div className="num text-xs font-semibold text-ink">
@@ -468,19 +475,27 @@ export const TripPlannerDock: React.FC<TripPlannerDockProps> = ({
               {/* Stacked Risk Profile */}
               <StackedRiskBar summary={selectedRoute.summary} showLabels height={7} />
 
-              {/* Badges Row */}
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {selectedRoute.summary.no_travel_miles > 0 ? (
-                  <RiskBadge level="No Travel" size="sm" />
-                ) : (
-                  <RiskBadge level="Low" size="sm" />
-                )}
-                {selectedRoute.summary.severe_miles > 0 && (
-                  <RiskBadge level="Severe" size="sm" />
-                )}
-                {selectedRoute.summary.high_miles > 0 && (
-                  <RiskBadge level="High" size="sm" />
-                )}
+              {/* Badges Row: list EVERY risk level that has miles > 0 with its mileage */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                {[
+                  { level: 'Low' as const, miles: selectedRoute.summary.low_miles },
+                  { level: 'Moderate' as const, miles: selectedRoute.summary.moderate_miles },
+                  { level: 'High' as const, miles: selectedRoute.summary.high_miles },
+                  { level: 'Severe' as const, miles: selectedRoute.summary.severe_miles },
+                  { level: 'No Travel' as const, miles: selectedRoute.summary.no_travel_miles },
+                ]
+                  .filter((t) => t.miles > 0)
+                  .map((t) => (
+                    <div
+                      key={t.level}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[6px] bg-surface border hairline"
+                    >
+                      <RiskBadge level={t.level} size="sm" />
+                      <span className="num text-[10px] font-bold text-ink">
+                        {Math.round(t.miles)} mi
+                      </span>
+                    </div>
+                  ))}
               </div>
             </div>
           )}
