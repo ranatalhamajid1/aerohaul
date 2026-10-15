@@ -2,11 +2,16 @@ import {
   Map as MlMap,
   Marker,
   Popup,
+  setWorkerUrl,
   type ExpressionSpecification,
   type GeoJSONSource,
   type MapLayerMouseEvent,
   type PaddingOptions,
 } from 'maplibre-gl';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+
+// Configure MapLibre to use the Vite-bundled web worker URL
+setWorkerUrl(maplibreWorkerUrl);
 import type { FeatureCollection, LineString, Point } from 'geojson';
 import type { Checkpoint, PlanResponse } from '../../types';
 import { boundsOf, decimate, measure, toLngLat, type LatLng, type MeasuredLine } from '../../lib/geo';
@@ -28,7 +33,22 @@ export interface PreparedRoute {
 
 export interface MapCallbacks {
   onSelectRoute: (id: string) => void;
+  onError?: (msg: string) => void;
+  onLoaded?: () => void;
 }
+
+export const STYLE_FALLBACKS: Record<ThemeName, string[]> = {
+  dark: [
+    'https://tiles.openfreemap.org/styles/dark',
+    'https://tiles.openfreemap.org/styles/positron',
+    'https://tiles.openfreemap.org/styles/liberty',
+  ],
+  light: [
+    'https://tiles.openfreemap.org/styles/positron',
+    'https://tiles.openfreemap.org/styles/liberty',
+    'https://tiles.openfreemap.org/styles/bright',
+  ],
+};
 
 const MAX_ROUTES = 3;
 const TRANSPARENT = 'rgba(0,0,0,0)';
@@ -70,6 +90,8 @@ export class MapController {
   private raf = 0;
   private interactionsBound = false;
   private readonly unsub: () => void;
+  private styleAttempt = 0;
+  private isReady = false;
 
   constructor(
     container: HTMLElement,
@@ -78,9 +100,10 @@ export class MapController {
     private readonly reducedMotion: boolean,
   ) {
     this.theme = theme;
+    const styles = STYLE_FALLBACKS[theme];
     this.map = new MlMap({
       container,
-      style: MAP_STYLES[theme],
+      style: styles[0],
       center: [-97, 39.2],
       zoom: 3.2,
       attributionControl: { compact: true },
@@ -97,7 +120,26 @@ export class MapController {
       if (viewStore.get().selectedCp !== null) viewStore.set({ selectedCp: null });
     });
 
-    this.map.on('style.load', () => this.install());
+    this.map.on('error', (e) => {
+      // Style fallback chain
+      const currentFallbacks = STYLE_FALLBACKS[this.theme];
+      if (!this.isReady && this.styleAttempt < currentFallbacks.length - 1) {
+        this.styleAttempt++;
+        const next = currentFallbacks[this.styleAttempt];
+        console.warn(`[MapLibre] Style load failed, falling back to: ${next}`, e);
+        this.map.setStyle(next, { diff: false });
+        return;
+      }
+      if (!this.isReady && this.styleAttempt >= currentFallbacks.length - 1) {
+        this.cb.current.onError?.(e.error?.message || 'Failed to initialize map tiles');
+      }
+    });
+
+    this.map.on('style.load', () => {
+      this.isReady = true;
+      this.install();
+      this.cb.current.onLoaded?.();
+    });
     this.map.once('load', () => {
       if (!this.routes.length && !reducedMotion) this.map.easeTo({ zoom: 3.75, duration: 1800, easing: easeOut });
     });
@@ -109,8 +151,19 @@ export class MapController {
   setTheme(theme: ThemeName): void {
     if (theme === this.theme) return;
     this.theme = theme;
+    this.styleAttempt = 0;
     this.heat.setTheme(theme);
-    this.map.setStyle(MAP_STYLES[theme], { diff: false });
+    this.map.setStyle(STYLE_FALLBACKS[theme][0], { diff: false });
+  }
+
+  retry(): void {
+    this.styleAttempt = 0;
+    this.isReady = false;
+    this.map.setStyle(STYLE_FALLBACKS[this.theme][0], { diff: false });
+  }
+
+  resize(): void {
+    this.map.resize();
   }
 
   setPadding(p: PaddingOptions): void {
@@ -413,8 +466,12 @@ export class MapController {
     this.clearPulses();
     const sel = this.selected();
     if (!sel) return;
-    for (const cp of sel.checkpoints) {
-      if (cp.risk_level !== 'Severe' && cp.risk_level !== 'No Travel') continue;
+    const severeCps = sel.checkpoints.filter(
+      (cp) => cp.risk_level === 'Severe' || cp.risk_level === 'No Travel',
+    );
+    // Cap at top 3 severe checkpoints to eliminate DOM animation thrashing
+    const topPulses = severeCps.slice(0, 3);
+    for (const cp of topPulses) {
       const el = document.createElement('div');
       el.className = 'pulse-marker';
       el.style.setProperty('--pulse-color', RISK_TOKENS[cp.risk_level].hex[this.theme]);

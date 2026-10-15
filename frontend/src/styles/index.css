@@ -19,11 +19,11 @@
   --line-rgb: 255 255 255;
   --accent: 255 166 43;
   --accent-ink: 22 16 6;
-  --panel: rgba(16, 18, 22, 0.78);
-  --panel-strong: rgba(14, 16, 19, 0.92);
-  --hairline: rgba(255, 255, 255, 0.08);
-  --hairline-strong: rgba(255, 255, 255, 0.14);
-  --inner-glow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --panel: rgba(14, 16, 20, 0.90);
+  --panel-strong: rgba(12, 14, 18, 0.96);
+  --hairline: rgba(255, 255, 255, 0.09);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+  --inner-glow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
   --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 24px 48px -16px rgba(0, 0, 0, 0.6),
     0 2px 6px rgba(0, 0, 0, 0.35);
   --shadow-lift: 0 10px 30px -10px rgba(0, 0, 0, 0.7);
@@ -46,7 +46,7 @@
   --line-rgb: 20 20 20;
   --accent: 184 106 0;
   --accent-ink: 255 250 240;
-  --panel: rgba(252, 251, 248, 0.84);
+  --panel: rgba(252, 251, 248, 0.94);
   --panel-strong: rgba(252, 251, 248, 0.96);
   --hairline: rgba(20, 20, 20, 0.09);
   --hairline-strong: rgba(20, 20, 20, 0.16);
@@ -93,8 +93,8 @@
   .glass {
     position: relative;
     background: var(--panel);
-    backdrop-filter: blur(18px) saturate(140%);
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border: 1px solid var(--hairline);
     box-shadow: var(--shadow-panel);
   }

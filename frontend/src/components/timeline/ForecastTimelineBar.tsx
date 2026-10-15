@@ -1,10 +1,46 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Play, Pause, Layers, Truck, Wind, CloudRain, Snowflake, ShieldAlert } from 'lucide-react';
 import { useView, viewStore } from '../../lib/store';
 import type { HeatMetric } from '../../lib/riskScale';
 import type { HeatmapFrames } from '../../hooks/useHeatmapFrames';
 import { Panel } from '../ui/Panel';
 import { formatClock, formatDay, addHours } from '../../lib/format';
+
+interface TimeDisplayPillProps {
+  departureTime: string;
+  loadedFrames: number;
+}
+
+const TimeDisplayPill = React.memo<TimeDisplayPillProps>(({ departureTime, loadedFrames }) => {
+  const hour = useView((s) => s.hour);
+  const targetDate = addHours(departureTime, hour);
+  const targetTimeStr = formatClock(targetDate);
+  const targetDayStr = formatDay(targetDate);
+  const targetHourNum = targetDate.getHours();
+  const isNight = targetHourNum >= 20 || targetHourNum < 6;
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-baseline gap-1.5">
+        <span className="num text-sm font-bold text-accent">+{hour}h</span>
+        <span className="text-[11px] font-mono text-ink">
+          {targetDayStr} {targetTimeStr}
+        </span>
+        <span
+          className={`text-[9px] font-mono px-1.5 py-0.2 rounded border hairline ${
+            isNight ? 'bg-indigo-950/40 text-indigo-300' : 'bg-amber-500/20 text-amber-500'
+          }`}
+        >
+          {isNight ? 'NIGHT' : 'DAY'}
+        </span>
+      </div>
+      <span className="text-[9px] font-mono text-muted">
+        {loadedFrames}/49 frames loaded
+      </span>
+    </div>
+  );
+});
+TimeDisplayPill.displayName = 'TimeDisplayPill';
 
 interface ForecastTimelineBarProps {
   departureTime?: string;
@@ -20,6 +56,7 @@ export const ForecastTimelineBar: React.FC<ForecastTimelineBarProps> = ({
   const playing = useView((s) => s.playing);
   const heatmapOn = useView((s) => s.heatmapOn);
   const truckOn = useView((s) => s.truckOn);
+  const rafRef = useRef(0);
 
   // Play animation loop
   useEffect(() => {
@@ -33,13 +70,18 @@ export const ForecastTimelineBar: React.FC<ForecastTimelineBarProps> = ({
     return () => window.clearInterval(timer);
   }, [playing]);
 
-  const targetDate = addHours(departureTime, hour);
-  const targetTimeStr = formatClock(targetDate);
-  const targetDayStr = formatDay(targetDate);
+  // Clean up RAF on unmount
+  useEffect(() => {
+    return () => cancelAnimationFrame(rafRef.current);
+  }, []);
 
-  // Is night time (roughly 20:00 to 06:00)?
-  const targetHourNum = targetDate.getHours();
-  const isNight = targetHourNum >= 20 || targetHourNum < 6;
+  const handleSlider = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = Number(e.target.value);
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      viewStore.set({ hour: val });
+    });
+  };
 
   const metrics: { id: HeatMetric; label: string; icon: React.ReactNode }[] = [
     { id: 'overall', label: 'Overall', icon: <ShieldAlert className="w-3 h-3" /> },
@@ -61,24 +103,7 @@ export const ForecastTimelineBar: React.FC<ForecastTimelineBarProps> = ({
           {playing ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
         </button>
 
-        <div className="flex flex-col">
-          <div className="flex items-baseline gap-1.5">
-            <span className="num text-sm font-bold text-accent">+{hour}h</span>
-            <span className="text-[11px] font-mono text-ink">
-              {targetDayStr} {targetTimeStr}
-            </span>
-            <span
-              className={`text-[9px] font-mono px-1.5 py-0.2 rounded border hairline ${
-                isNight ? 'bg-indigo-950/40 text-indigo-300' : 'bg-amber-500/20 text-amber-500'
-              }`}
-            >
-              {isNight ? 'NIGHT' : 'DAY'}
-            </span>
-          </div>
-          <span className="text-[9px] font-mono text-muted">
-            {heatmapFrames.loaded}/49 frames loaded
-          </span>
-        </div>
+        <TimeDisplayPill departureTime={departureTime} loadedFrames={heatmapFrames.loaded} />
       </div>
 
       {/* Center: Timeline Scrubber with Ticks */}
@@ -89,7 +114,7 @@ export const ForecastTimelineBar: React.FC<ForecastTimelineBarProps> = ({
           max={48}
           step={1}
           value={hour}
-          onChange={(e) => viewStore.set({ hour: Number(e.target.value) })}
+          onChange={handleSlider}
           className="scrubber"
           aria-label="Forecast hour slider (0 to 48 hours)"
         />

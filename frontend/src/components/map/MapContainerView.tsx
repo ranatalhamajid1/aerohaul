@@ -1,10 +1,11 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useReducedMotion } from 'framer-motion';
 import { MapController, type MapCallbacks } from './MapController';
 import type { PlanResponse } from '../../types';
 import type { ThemeName } from '../../lib/tokens';
 import type { HeatmapFrames } from '../../hooks/useHeatmapFrames';
 import { useIsMobile } from '../../hooks/useMediaQuery';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 
 interface MapContainerViewProps {
   theme: ThemeName;
@@ -23,13 +24,23 @@ export const MapContainerView: React.FC<MapContainerViewProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<MapController | null>(null);
-  const cbRef = useRef<MapCallbacks>({ onSelectRoute });
-  cbRef.current = { onSelectRoute };
+  const [mapError, setMapError] = useState<string | null>(null);
 
   const reducedMotion = !!useReducedMotion();
   const isMobile = useIsMobile();
 
-  // Initialize MapController once
+  const cbRef = useRef<MapCallbacks>({
+    onSelectRoute,
+    onError: (err) => setMapError(err),
+    onLoaded: () => setMapError(null),
+  });
+  cbRef.current = {
+    onSelectRoute,
+    onError: (err) => setMapError(err),
+    onLoaded: () => setMapError(null),
+  };
+
+  // Initialize MapController once with cleanup
   useEffect(() => {
     if (!containerRef.current) return;
     const controller = new MapController(
@@ -43,6 +54,24 @@ export const MapContainerView: React.FC<MapContainerViewProps> = ({
     return () => {
       controller.destroy();
       controllerRef.current = null;
+    };
+  }, []);
+
+  // ResizeObserver on map container
+  useEffect(() => {
+    if (!containerRef.current) return;
+    let rafId = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        controllerRef.current?.resize();
+      });
+    });
+    ro.observe(containerRef.current);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
     };
   }, []);
 
@@ -82,6 +111,31 @@ export const MapContainerView: React.FC<MapContainerViewProps> = ({
   return (
     <div className="absolute inset-0 w-full h-full overflow-hidden bg-bg">
       <div ref={containerRef} className="w-full h-full" />
+
+      {/* Visible Error Overlay with Retry */}
+      {mapError && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-6 bg-bg/80 backdrop-blur-sm">
+          <div className="glass max-w-md p-6 rounded-2xl border hairline text-center space-y-4 shadow-lift">
+            <div className="w-12 h-12 rounded-full bg-rose-500/20 text-rose-400 mx-auto flex items-center justify-center">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-base text-ink">Map Service Offline</h3>
+              <p className="text-xs text-muted mt-1 font-mono leading-relaxed">{mapError}</p>
+            </div>
+            <button
+              onClick={() => {
+                setMapError(null);
+                controllerRef.current?.retry();
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-accent-ink rounded-lg text-xs font-semibold hover:brightness-110 active:brightness-95 transition cursor-pointer shadow-xs"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Retry Map Connection</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
