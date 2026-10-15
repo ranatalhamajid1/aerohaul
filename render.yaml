@@ -1,16 +1,13 @@
 services:
   - type: web
-    name: truck-router-backend
-    env: python
+    name: aerohaul-api
+    runtime: python
+    plan: free
     rootDir: backend
-    buildCommand: "pip install -r requirements.txt && python manage.py migrate && python manage.py collectstatic --noinput"
-    startCommand: "gunicorn core.wsgi:application --bind 0.0.0.0:$PORT --workers 3"
+    buildCommand: ./build.sh
+    startCommand: gunicorn core.wsgi:application
     envVars:
       - key: DEBUG
         value: "False"
-      - key: SECRET_KEY
-        generateValue: true
       - key: ALLOWED_HOSTS
         value: "*"
-      - key: CORS_ALLOW_ALL_ORIGINS
-        value: "True"
