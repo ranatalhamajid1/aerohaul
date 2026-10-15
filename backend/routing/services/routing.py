@@ -14,8 +14,15 @@ from django.core.cache import cache
 logger = logging.getLogger(__name__)
 
 METERS_TO_MILES = 0.000621371
-OSRM_BASE_URL = "https://router.project-osrm.org/route/v1/driving"
+OSRM_SERVERS = [
+    "https://router.project-osrm.org/route/v1/driving",
+    "https://routing.openstreetmap.de/routed-car/route/v1/driving",
+]
 ORS_BASE_URL = "https://api.openrouteservice.org/v2/directions/driving-hgv/geojson"
+HTTP_HEADERS = {
+    "User-Agent": "AeroHaul-Truck-Router/1.0 (https://github.com/ranatalhamajid1/aerohaul)",
+    "Accept": "application/json",
+}
 
 
 def _format_polyline_coords(geojson_coords: List[List[float]]) -> List[List[float]]:
@@ -59,6 +66,7 @@ def _fetch_ors_routes(
     headers = {
         "Authorization": api_key,
         "Content-Type": "application/json",
+        **HTTP_HEADERS,
     }
     body = {
         "coordinates": [[origin_lng, origin_lat], [dest_lng, dest_lat]],
@@ -71,7 +79,7 @@ def _fetch_ors_routes(
         "geometry": True,
     }
     try:
-        resp = requests.post(ORS_BASE_URL, json=body, headers=headers, timeout=8)
+        resp = requests.post(ORS_BASE_URL, json=body, headers=headers, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             features = data.get("features", [])
@@ -99,35 +107,38 @@ def _fetch_ors_routes(
 def _fetch_osrm_direct(
     origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float
 ) -> List[Dict[str, Any]]:
-    """Query OSRM for direct routes with alternatives flag."""
-    url = f"{OSRM_BASE_URL}/{origin_lng},{origin_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson&alternatives=true"
-    routes: List[Dict[str, Any]] = []
-    try:
-        resp = requests.get(url, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()
-            raw_routes = data.get("routes", [])
-            for idx, r in enumerate(raw_routes):
-                coords = r.get("geometry", {}).get("coordinates", [])
-                dist_meters = r.get("distance", 0.0)
-                dur_sec = r.get("duration", 0.0)
-                name = (
-                    "Primary Route (Fastest Interstate)"
-                    if idx == 0
-                    else f"Alternative Route {idx + 1}"
-                )
-                routes.append({
-                    "id": f"route_{idx + 1}",
-                    "name": name,
-                    "geometry": _format_polyline_coords(coords),
-                    "distance_miles": round(dist_meters * METERS_TO_MILES, 1),
-                    "duration_seconds": dur_sec,
-                    "diverted_via_waypoint": False,
-                    "alternative_note": "Native corridor alternative from routing engine",
-                })
-    except Exception as e:
-        logger.warning("OSRM direct routing failed: %s", e)
-    return routes
+    """Query OSRM for direct routes with alternatives flag using redundant endpoints and User-Agent."""
+    for base_url in OSRM_SERVERS:
+        url = f"{base_url}/{origin_lng},{origin_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson&alternatives=true"
+        try:
+            resp = requests.get(url, headers=HTTP_HEADERS, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_routes = data.get("routes", [])
+                if raw_routes:
+                    routes: List[Dict[str, Any]] = []
+                    for idx, r in enumerate(raw_routes):
+                        coords = r.get("geometry", {}).get("coordinates", [])
+                        dist_meters = r.get("distance", 0.0)
+                        dur_sec = r.get("duration", 0.0)
+                        name = (
+                            "Primary Route (Fastest Interstate)"
+                            if idx == 0
+                            else f"Alternative Route {idx + 1}"
+                        )
+                        routes.append({
+                            "id": f"route_{idx + 1}",
+                            "name": name,
+                            "geometry": _format_polyline_coords(coords),
+                            "distance_miles": round(dist_meters * METERS_TO_MILES, 1),
+                            "duration_seconds": dur_sec,
+                            "diverted_via_waypoint": False,
+                            "alternative_note": "Native corridor alternative from routing engine",
+                        })
+                    return routes
+        except Exception as e:
+            logger.warning("OSRM direct routing failed on %s: %s", base_url, e)
+    return []
 
 
 def _fetch_osrm_via_waypoint(
@@ -142,29 +153,39 @@ def _fetch_osrm_via_waypoint(
     note: str,
 ) -> Optional[Dict[str, Any]]:
     """Query OSRM through a detour waypoint to create a verified drivable alternative."""
-    url = f"{OSRM_BASE_URL}/{origin_lng},{origin_lat};{wp_lng},{wp_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson"
-    try:
-        resp = requests.get(url, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()
-            raw_routes = data.get("routes", [])
-            if raw_routes:
-                r = raw_routes[0]
-                coords = r.get("geometry", {}).get("coordinates", [])
-                dist_meters = r.get("distance", 0.0)
-                dur_sec = r.get("duration", 0.0)
-                return {
-                    "id": route_id,
-                    "name": name,
-                    "geometry": _format_polyline_coords(coords),
-                    "distance_miles": round(dist_meters * METERS_TO_MILES, 1),
-                    "duration_seconds": dur_sec,
-                    "diverted_via_waypoint": True,
-                    "alternative_note": note,
-                }
-    except Exception as e:
-        logger.warning("OSRM waypoint detour routing failed: %s", e)
+    for base_url in OSRM_SERVERS:
+        url = f"{base_url}/{origin_lng},{origin_lat};{wp_lng},{wp_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson"
+        try:
+            resp = requests.get(url, headers=HTTP_HEADERS, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_routes = data.get("routes", [])
+                if raw_routes:
+                    r = raw_routes[0]
+                    coords = r.get("geometry", {}).get("coordinates", [])
+                    dist_meters = r.get("distance", 0.0)
+                    dur_sec = r.get("duration", 0.0)
+                    return {
+                        "id": route_id,
+                        "name": name,
+                        "geometry": _format_polyline_coords(coords),
+                        "distance_miles": round(dist_meters * METERS_TO_MILES, 1),
+                        "duration_seconds": dur_sec,
+                        "diverted_via_waypoint": True,
+                        "alternative_note": note,
+                    }
+        except Exception as e:
+            logger.warning("OSRM waypoint routing failed on %s: %s", base_url, e)
     return None
+
+
+def _haversine_distance_miles(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    r = 3958.8
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    return 2.0 * r * math.asin(math.sqrt(max(0.0, a)))
 
 
 def _generate_synthetic_fallback_routes(
@@ -181,8 +202,10 @@ def _generate_synthetic_fallback_routes(
         (-0.2, "Route 3 (Southern Bypass)", True, "Southern corridor detour generated for alternate route evaluation"),
     ]
 
+    straight_miles = _haversine_distance_miles(origin_lat, origin_lng, dest_lat, dest_lng)
+
     for idx, (offset, name, diverted, note) in enumerate(offsets):
-        # Generate 15 points along an arc
+        # Generate 61 dense points along an arc corridor
         coords: List[List[float]] = []
         d_lat = dest_lat - origin_lat
         d_lng = dest_lng - origin_lng
@@ -190,17 +213,16 @@ def _generate_synthetic_fallback_routes(
         norm_lat = -d_lng / (length or 1.0)
         norm_lng = d_lat / (length or 1.0)
 
-        for step in range(21):
-            t = step / 20.0
+        for step in range(61):
+            t = step / 60.0
             base_lat = origin_lat + t * d_lat
             base_lng = origin_lng + t * d_lng
-            arc = math.sin(t * math.pi) * offset * length * 0.4
+            arc = math.sin(t * math.pi) * offset * length * 0.18
             pt_lat = round(base_lat + arc * norm_lat, 5)
             pt_lng = round(base_lng + arc * norm_lng, 5)
             coords.append([pt_lat, pt_lng])
 
-        straight_miles = length * 69.0
-        dist_mi = round(straight_miles * (1.15 + abs(offset) * 0.25), 1)
+        dist_mi = round(straight_miles * (1.10 + abs(offset) * 0.12), 1)
         dur_sec = (dist_mi / 55.0) * 3600.0  # ~55 mph average freight speed
 
         routes.append({

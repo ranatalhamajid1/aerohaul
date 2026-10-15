@@ -284,8 +284,20 @@ export class MapController {
     for (let i = 0; i < MAX_ROUTES; i++) {
       map.addSource(`route-${i}`, { type: 'geojson', lineMetrics: true, data: EMPTY });
       const layout = { 'line-cap': 'round', 'line-join': 'round' } as const;
-      map.addLayer({ id: `route-casing-${i}`, type: 'line', source: `route-${i}`, layout, paint: { 'line-width': 0 } });
-      map.addLayer({ id: `route-line-${i}`, type: 'line', source: `route-${i}`, layout, paint: { 'line-width': 2 } });
+      map.addLayer({
+        id: `route-casing-${i}`,
+        type: 'line',
+        source: `route-${i}`,
+        layout,
+        paint: { 'line-width': 0, 'line-color': CASING[this.theme] },
+      });
+      map.addLayer({
+        id: `route-line-${i}`,
+        type: 'line',
+        source: `route-${i}`,
+        layout,
+        paint: { 'line-width': 2, 'line-color': ROUTE_TOKENS[i].hex[this.theme] },
+      });
     }
     map.addSource('cps', { type: 'geojson', data: EMPTY, promoteId: 'idx' });
     const hover: ExpressionSpecification = ['boolean', ['feature-state', 'hover'], false];
@@ -438,6 +450,8 @@ export class MapController {
       if (!map.getLayer(`route-line-${i}`)) continue;
       const isSel = sel?.index === i;
       const offset = isSel ? 0 : altSlot++ === 0 ? -4 : 4;
+      map.setPaintProperty(`route-line-${i}`, 'line-color', ROUTE_TOKENS[i].hex[this.theme]);
+      map.setPaintProperty(`route-casing-${i}`, 'line-color', CASING[this.theme]);
       map.setPaintProperty(
         `route-line-${i}`,
         'line-width',
